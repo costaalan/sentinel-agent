@@ -102,6 +102,8 @@ class SpecialistAgent(ABC):
     
     def __init__(self, supervisor):
         self.supervisor = supervisor
+        from agent.policy_rag import get_policy_rag
+        self._rag = get_policy_rag()
     
     @abstractmethod
     def detectar_anomalia(self, conn) -> Optional[dict]:
@@ -114,8 +116,19 @@ class SpecialistAgent(ABC):
         pass
     
     def classificar_nivel(self, anomalia: dict) -> int:
-        """Classifica o nivel de autonomia baseado no tipo de anomalia."""
-        return 2  # padrao: nivel 2
+        """Classifica o nivel de autonomia baseado na politica (RAG)."""
+        componente = anomalia.get("componente", "")
+        resultado = self._rag.classificar_nivel_por_politica(self.name, componente)
+        nivel = resultado["nivel"]
+        
+        # Log da politica consultada
+        print(f"[{self.name}] RAG consultado: nivel={nivel}, justificativa={resultado['justificativa'][:60]}...")
+        
+        # Se tem runbook, registrar no diagnostico
+        if resultado.get("runbook"):
+            print(f"[{self.name}] Runbook aplicavel: {resultado['runbook'][:80]}...")
+        
+        return nivel
     
     def executar_acao(self, anomalia: dict, diagnostico: dict) -> dict:
         """Executa a acao e retorna resultado."""
@@ -312,12 +325,84 @@ Responda em JSON: {{"causa": "...", "confianca": 0.0-1.0, "sugestao": "..."}}"""
         return {"sucesso": True, "detalhes": f"Step reiniciado. Job {anomalia['componente']}恢复正常."}
 
 
+class RedeMonitor(SpecialistAgent):
+    """Monitora conectividade e saturacao de rede."""
+    name = "RedeMonitor"
+    description = "Monitora disponibilidade de servicos e saturacao de rede"
+    components_monitored = ["api_gateway", "servico_b"]
+    
+    def detectar_anomalia(self, conn) -> Optional[dict]:
+        cursor = conn.execute(
+            "SELECT valor, timestamp FROM metricas WHERE componente = 'api_gateway' "
+            "AND tipo_metrica = 'latency_ms' ORDER BY timestamp DESC LIMIT 1"
+        )
+        row = cursor.fetchone()
+        if row and row[0] > 5000:
+            return {
+                "componente": "api_gateway",
+                "metrica": "latency_ms",
+                "valor": row[0],
+                "descricao": f"Latencia alta no API Gateway: {row[0]:.0f}ms",
+                "timestamp": row[1],
+            }
+        return None
+    
+    def classificar_nivel(self, anomalia: dict) -> int:
+        return 3  # rede tem blast radius alto, sempre Nivel 3
+    
+    def diagnosticar(self, anomalia: dict, conn) -> dict:
+        return {"causa": "possivel saturacao de banda ou rota instavel", "confianca": 0.6, "sugestao": "verificar link primario"}
+    
+    def executar_acao(self, anomalia: dict, diagnostico: dict) -> dict:
+        return {"sucesso": False, "detalhes": "Requer autorizacao humana - acao de rede Nivel 3"}
+
+
+class IAMonitor(SpecialistAgent):
+    """Monitora SLA e performance de agentes/servicos de IA."""
+    name = "IAMonitor"
+    description = "Monitora latencia e taxa de erro de servicos de IA"
+    components_monitored = ["agente_ia_recomendacao"]
+    
+    def detectar_anomalia(self, conn) -> Optional[dict]:
+        cursor = conn.execute(
+            "SELECT valor, timestamp FROM metricas WHERE componente = 'agente_ia_recomendacao' "
+            "AND tipo_metrica = 'inference_latency_ms' ORDER BY timestamp DESC LIMIT 1"
+        )
+        row = cursor.fetchone()
+        if row and row[0] > 3000:
+            return {
+                "componente": "agente_ia_recomendacao",
+                "metrica": "inference_latency_ms",
+                "valor": row[0],
+                "descricao": f"Latencia de inferencia alta: {row[0]:.0f}ms",
+                "timestamp": row[1],
+            }
+        return None
+    
+    def classificar_nivel(self, anomalia: dict) -> int:
+        return 1  # escalar replica e seguro e reversivel
+    
+    def diagnosticar(self, anomalia: dict, conn) -> dict:
+        cursor = conn.execute(
+            "SELECT valor FROM metricas WHERE componente = 'agente_ia_recomendacao' "
+            "AND tipo_metrica = 'requests_per_min' ORDER BY timestamp DESC LIMIT 1"
+        )
+        row = cursor.fetchone()
+        rps = row[0] if row else 0
+        return {"causa": f"alta demanda ({rps:.0f} req/min) sobrecarregando o modelo", "confianca": 0.8, "sugestao": "escalar replica do modelo"}
+    
+    def executar_acao(self, anomalia: dict, diagnostico: dict) -> dict:
+        return {"sucesso": True, "detalhes": "Replica do modelo escalada automaticamente (Nivel 1)"}
+
+
 # Registry de agentes - para adicionar novo agente, registre aqui
 # Basta: from agent.novo_agente import NovoAgente
 #        agent_registry["NovoAgente"] = NovoAgente
 agent_registry: dict[str, type[SpecialistAgent]] = {
     "DashboardMonitor": DashboardMonitor,
     "JobsMonitor": JobsMonitor,
+    "RedeMonitor": RedeMonitor,
+    "IAMonitor": IAMonitor,
 }
 
 

@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sentinel Agent — AIOps Multiagente</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+    --bg: #08080e; --bg2: #0d0d1a; --bg3: #12122a;
+    --border: rgba(99,102,241,0.12);
+    --text: #e0e0e0; --text2: #888;
+    --accent: #6366f1;
+    --green: #22c55e; --yellow: #eab308; --red: #ef4444; --blue: #3b82f6;
+    --cyan: #06b6d4; --orange: #f97316; --pink: #ec4899;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+    background: var(--bg); color: var(--text);
+    font-family: 'Inter', sans-serif;
+    height: 100vh; overflow: hidden;
+    display: grid;
+    grid-template-columns: 1fr 360px;
+    grid-template-rows: 52px 1fr 240px;
+    grid-template-areas:
+        "header header"
+        "graph  sidebar"
+        "chat   sidebar";
+}
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+header {
+    grid-area: header; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 24px; border-bottom: 1px solid var(--border); background: var(--bg2);
+}
+header h1 { font-size: 15px; font-weight: 600; letter-spacing: -0.3px; }
+header h1 span { color: var(--accent); }
+header .stats { display: flex; gap: 20px; font-size: 12px; }
+header .stats .stat { display: flex; align-items: center; gap: 6px; }
+header .stats .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+header .stats .cost { 
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    padding: 3px 10px; background: rgba(99,102,241,0.1); 
+    border-radius: 6px; border: 1px solid rgba(99,102,241,0.2);
+}
+
+#graph-area {
+    grid-area: graph; position: relative; overflow: hidden;
+    background: radial-gradient(ellipse at 30% 40%, #0a0a18 0%, #06060c 100%);
+}
+#infra-canvas { width: 100%; height: 100%; }
+
+#chat-area {
+    grid-area: chat; border-top: 1px solid var(--border);
+    background: var(--bg2); display: flex; flex-direction: column; overflow: hidden;
+}
+#chat-header {
+    padding: 8px 16px; font-size: 11px; font-weight: 600;
+    color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em;
+    border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between;
+}
+#chat-messages {
+    flex: 1; overflow-y: auto; padding: 8px 16px;
+    font-family: 'JetBrains Mono', monospace; font-size: 11px; line-height: 1.6;
+}
+.chat-msg { padding: 4px 0; border-bottom: 1px solid rgba(99,102,241,0.05); }
+.chat-msg .time { color: var(--text2); }
+.chat-msg .from { font-weight: 500; }
+.chat-msg .from.super { color: var(--accent); }
+.chat-msg .from.dash { color: var(--cyan); }
+.chat-msg .from.jobs { color: var(--yellow); }
+.chat-msg .from.rede { color: var(--orange); }
+.chat-msg .from.ia { color: var(--pink); }
+.chat-msg .from.sim { color: var(--text2); }
+.chat-msg .arrow { color: var(--text2); }
+.chat-msg .content { color: var(--text); }
+
+#sidebar {
+    grid-area: sidebar; border-left: 1px solid var(--border);
+    background: var(--bg2); display: flex; flex-direction: column; overflow: hidden;
+}
+#sidebar-tabs { display: flex; border-bottom: 1px solid var(--border); }
+.tab-btn {
+    flex: 1; padding: 10px; background: transparent; border: none;
+    color: var(--text2); font-size: 11px; font-weight: 500;
+    cursor: pointer; transition: all 0.2s;
+    text-transform: uppercase; letter-spacing: 0.05em;
+}
+.tab-btn:hover { color: var(--text); background: rgba(99,102,241,0.05); }
+.tab-btn.active { color: var(--accent); border-bottom: 2px solid var(--accent); }
+.tab-content { display: none; flex: 1; overflow-y: auto; padding: 12px 16px; }
+.tab-content.active { display: block; }
+
+.incident-card {
+    padding: 10px 12px; border-radius: 8px; margin-bottom: 8px;
+    border: 1px solid var(--border); background: var(--bg3); font-size: 12px;
+}
+.incident-card .title { font-weight: 500; margin-bottom: 4px; }
+.incident-card .meta { font-size: 11px; color: var(--text2); }
+.incident-card .status {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 10px; font-weight: 600; text-transform: uppercase;
+}
+.incident-card .status.resolved { background: rgba(34,197,94,0.15); color: var(--green); }
+.incident-card .status.pending { background: rgba(234,179,8,0.15); color: var(--yellow); }
+.incident-card .status.in-progress { background: rgba(59,130,246,0.15); color: var(--blue); }
+.incident-card .actions { margin-top: 8px; display: flex; gap: 6px; }
+.incident-card .actions button {
+    padding: 4px 12px; border-radius: 6px; border: none;
+    font-size: 11px; font-weight: 500; cursor: pointer; transition: all 0.2s;
+}
+.btn-auth { background: rgba(34,197,94,0.2); color: var(--green); }
+.btn-auth:hover { background: rgba(34,197,94,0.3); }
+.btn-deny { background: rgba(239,68,68,0.2); color: var(--red); }
+.btn-deny:hover { background: rgba(239,68,68,0.3); }
+.btn-take { background: rgba(99,102,241,0.2); color: var(--accent); }
+.btn-take:hover { background: rgba(99,102,241,0.3); }
+
+.agent-node {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; border-radius: 8px; margin-bottom: 6px;
+    border: 1px solid var(--border); font-size: 12px;
+}
+.agent-dot { width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 8px currentColor; }
+.agent-icon { font-size: 16px; }
+.agent-name { font-weight: 500; flex: 1; }
+.agent-status { font-size: 11px; }
+.agent-status.idle { color: var(--text2); }
+.agent-status.active { color: var(--green); }
+</style>
+</head>
+<body>
+<header>
+    <h1>⚡ <span>Sentinel</span> Agent</h1>
+    <div class="stats">
+        <span class="stat"><span class="dot" style="background:var(--green)" id="s-resolved">0</span> Resolvidos</span>
+        <span class="stat"><span class="dot" style="background:var(--blue)" id="s-inprogress">0</span> Em andamento</span>
+        <span class="stat"><span class="dot" style="background:var(--yellow)" id="s-pending">0</span> Pendentes</span>
+        <span class="stat" style="font-size:11px;color:var(--text2)" id="s-agents">4 agentes</span>
+        <span class="cost" id="s-cost">💰 $0.000</span>
+    </div>
+</header>
+<div id="graph-area"><canvas id="infra-canvas"></canvas></div>
+<div id="chat-area">
+    <div id="chat-header"><span>📡 Conversa entre Agentes</span><span id="chat-count" style="color:var(--text2)">0 msg</span></div>
+    <div id="chat-messages"></div>
+</div>
+<div id="sidebar">
+    <div id="sidebar-tabs">
+        <button class="tab-btn active" onclick="switchTab('incidentes',this)">📋 Incidentes</button>
+        <button class="tab-btn" onclick="switchTab('resultados',this)">📊 Resultados</button>
+        <button class="tab-btn" onclick="switchTab('agentes',this)">🤖 Agentes</button>
+        <button class="tab-btn" onclick="switchTab('finops',this)">💰 FinOps</button>
+    </div>
+    <div id="tab-incidentes" class="tab-content active"></div>
+    <div id="tab-resultados" class="tab-content"></div>
+    <div id="tab-agentes" class="tab-content"></div>
+    <div id="tab-finops" class="tab-content">
+        <div style="margin-bottom:12px">
+            <div style="font-size:11px;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px">💰 Custo de LLMs (simulado)</div>
+            <div class="incident-card" style="padding:12px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                    <span style="color:var(--text2)">Modelo</span>
+                    <span id="fm-model" style="font-weight:500">Ollama (qwen2.5:7b)</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                    <span style="color:var(--text2)">Provedor</span>
+                    <select id="fm-provider" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:11px;font-family:'JetBrains Mono';cursor:pointer">
+                        <option value="ollama">🖥️ Ollama (CPU)</option>
+                        <option value="ollama_gpu">🖥️ Ollama (GPU)</option>
+                        <option value="openai">☁️ OpenAI GPT-4o</option>
+                        <option value="anthropic">☁️ Anthropic Claude 4</option>
+                        <option value="deepseek">☁️ DeepSeek V3</option>
+                    </select>
+                </div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                    <span style="color:var(--text2)">Custo / 1M tokens</span>
+                    <span id="fm-rate" style="font-family:'JetBrains Mono'">$0.00</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                    <span style="color:var(--text2)">Throughput</span>
+                    <span id="fm-thoughput" style="font-family:'JetBrains Mono'">-</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                    <span style="color:var(--text2)">Custo total (sessao)</span>
+                    <span id="fm-total" style="font-family:'JetBrains Mono';font-weight:600">$0.0000</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                    <span style="color:var(--text2)">Economia vs OpenAI</span>
+                    <span id="fm-save" style="font-family:'JetBrains Mono';font-weight:600">100%</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                    <span style="color:var(--text2)">Proj. mensal</span>
+                    <span id="fm-monthly" style="font-family:'JetBrains Mono';font-weight:600">$0.00</span>
+                </div>
+                <div id="fm-recommend" style="margin-top:10px;padding:8px 10px;border-radius:6px;font-size:11px;background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.2)">
+                    💡 <span id="fm-rec-text">Ideal para: Privacidade e custo zero</span>
+                </div>
+            </div>
+        </div>
+        <div style="margin-bottom:12px">
+            <div style="font-size:11px;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px">📊 Uso de Tokens (sessao)</div>
+            <div class="incident-card" style="padding:12px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                    <span style="color:var(--text2)">Input</span>
+                    <span id="fm-tok-in" style="font-family:'JetBrains Mono'">0</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                    <span style="color:var(--text2)">Output</span>
+                    <span id="fm-tok-out" style="font-family:'JetBrains Mono'">0</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                    <span style="color:var(--text2)">Total</span>
+                    <span id="fm-tok-total" style="font-family:'JetBrains Mono';font-weight:600">0</span>
+                </div>
+                <div style="margin-top:8px;height:4px;background:var(--bg);border-radius:2px;overflow:hidden">
+                    <div id="fm-tok-bar" style="height:100%;width:0%;background:linear-gradient(90deg,var(--accent),var(--cyan));border-radius:2px;transition:width 0.5s"></div>
+                </div>
+            </div>
+        </div>
+        <div>
+            <div style="font-size:11px;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px">⚡ Latencia Media</div>
+            <div class="incident-card" style="padding:12px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                    <span style="color:var(--text2)">LLM (inferencia)</span>
+                    <span id="fm-lat-llm" style="font-family:'JetBrains Mono'">0ms</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                    <span style="color:var(--text2)">API Gateway</span>
+                    <span id="fm-lat-api" style="font-family:'JetBrains Mono'">0ms</span>
+                </div>
+                <div style="display:flex;justify-content:space-between">
+                    <span style="color:var(--text2)">Agentes (ciclo)</span>
+                    <span id="fm-lat-agents" style="font-family:'JetBrains Mono'">0ms</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ════════════════ SCENARIO ENGINE ════════════════
+// Simula o fluxo de incidentes em producao - um de cada vez, com delays reais
+
+const AGENTS = [
+    { id: 'supervisor', label: '👔 Supervisor', x: 0, y: 0, color: '#6366f1', type: 'supervisor' },
+    { id: 'dash_mon', label: '📊 Dashboard', x: 0, y: 0, color: '#06b6d4', type: 'agent' },
+    { id: 'jobs_mon', label: '⚙️ Jobs', x: 0, y: 0, color: '#eab308', type: 'agent' },
+    { id: 'rede_mon', label: '🌐 Rede', x: 0, y: 0, color: '#f97316', type: 'agent' },
+    { id: 'ia_mon', label: '🤖 IA', x: 0, y: 0, color: '#ec4899', type: 'agent' },
+];
+
+const COMPONENTS = [
+    { id: 'api_gw', label: 'API Gateway', x: 0, y: 0, status: 'healthy' },
+    { id: 'svc_a', label: 'Servico A', x: 0, y: 0, status: 'healthy' },
+    { id: 'svc_b', label: 'Servico B', x: 0, y: 0, status: 'healthy' },
+    { id: 'fila', label: 'Fila Jobs', x: 0, y: 0, status: 'healthy' },
+    { id: 'job', label: 'Job Sync', x: 0, y: 0, status: 'healthy' },
+    { id: 'ia', label: 'Agente IA', x: 0, y: 0, status: 'healthy' },
+    { id: 'dash', label: 'Dashboard', x: 0, y: 0, status: 'healthy' },
+];
+
+const EDGES = [
+    { from: 'api_gw', to: 'svc_a' }, { from: 'api_gw', to: 'svc_b' },
+    { from: 'fila', to: 'job' }, { from: 'job', to: 'dash' },
+    { from: 'api_gw', to: 'ia' }, { from: 'svc_a', to: 'fila' },
+    { from: 'svc_b', to: 'fila' },
+];
+
+// Cenarios de incidente com delays realistas
+const SCENARIOS = [
+    {
+        name: 'job_travado',
+        agent: 'JobsMonitor',
+        agentNode: 'jobs_mon',
+        component: 'job',
+        agentIcon: '⚙️',
+        componentLabel: 'Job Sync Vendas',
+        level: 1,
+        steps: [
+            { delay: 1000, message: 'JobsMonitor → DashboardMonitor: "Step sync_vendas travado ha 280s. Assumindo restart (N1)."', particle: ['jobs_mon','dash_mon'] },
+            { delay: 2000, message: 'JobsMonitor: 🔄 Reiniciando step sync_vendas...', particle: ['jobs_mon','job'] },
+            { delay: 3000, message: 'JobsMonitor → Supervisor: "Step reiniciado com sucesso. Monitorando..."', particle: ['jobs_mon','supervisor'] },
+            { delay: 2000, message: 'DashboardMonitor → Supervisor: "Dashboard voltou a atualizar. Incidente resolvido."', particle: ['dash_mon','supervisor'] },
+            { delay: 1500, message: '👔 Supervisor: "Incidente job_travado registrado como resolvido (N1)."', particle: [] },
+        ]
+    },
+    {
+        name: 'erro_500',
+        agent: 'DashboardMonitor',
+        agentNode: 'dash_mon',
+        component: 'api_gw',
+        agentIcon: '📊',
+        componentLabel: 'API Gateway',
+        level: 3,
+        steps: [
+            { delay: 1500, message: 'DashboardMonitor → RedeMonitor: "API Gateway com erro 500. Ha algo na rede?"', particle: ['dash_mon','rede_mon'] },
+            { delay: 2500, message: 'RedeMonitor → DashboardMonitor: "Rede estabil. Pode ser deploy recente."', particle: ['rede_mon','dash_mon'] },
+            { delay: 2000, message: 'DashboardMonitor: 🔍 Investigando... deploy detectado ha 10min.', particle: [] },
+            { delay: 3000, message: 'DashboardMonitor → Supervisor: "Proposta N3: Rollback do deploy no API Gateway."', particle: ['dash_mon','supervisor'] },
+            { delay: 1500, message: '👔 Supervisor: "Proposta N3 pendente de decisao humana."', particle: [] },
+        ]
+    },
+    {
+        name: 'latencia_ia',
+        agent: 'IAMonitor',
+        agentNode: 'ia_mon',
+        component: 'ia',
+        agentIcon: '🤖',
+        componentLabel: 'Agente IA',
+        level: 1,
+        steps: [
+            { delay: 1000, message: 'IAMonitor: "Latencia de inferencia em 8500ms. Alta demanda detectada."', particle: [] },
+            { delay: 2000, message: 'IAMonitor: 🔄 Escalando replica do modelo (N1)...', particle: ['ia_mon','ia'] },
+            { delay: 3000, message: 'IAMonitor → Supervisor: "Replica escalada. Latencia normalizada."', particle: ['ia_mon','supervisor'] },
+            { delay: 1500, message: '👔 Supervisor: "Incidente latencia_ia resolvido automaticamente (N1)."', particle: [] },
+        ]
+    },
+    {
+        name: 'dashboard_parou',
+        agent: 'DashboardMonitor',
+        agentNode: 'dash_mon',
+        component: 'dash',
+        agentIcon: '📊',
+        componentLabel: 'Dashboard Vendas',
+        level: 2,
+        steps: [
+            { delay: 1500, message: 'DashboardMonitor → JobsMonitor: "Dashboard parou de atualizar. Jobs rodando?"', particle: ['dash_mon','jobs_mon'] },
+            { delay: 2000, message: 'JobsMonitor → DashboardMonitor: "Jobs normais. Pode ser cache do dashboard."', particle: ['jobs_mon','dash_mon'] },
+            { delay: 2000, message: 'DashboardMonitor: 🔄 Forcando refresh de cache...', particle: ['dash_mon','dash'] },
+            { delay: 2500, message: 'DashboardMonitor → Supervisor: "Cache renovado. Dashboard恢复正常."', particle: ['dash_mon','supervisor'] },
+            { delay: 1500, message: '👔 Supervisor: "Incidente dashboard_parou resolvido (N2)."', particle: [] },
+        ]
+    },
+    {
+        name: 'incidente_rede',
+        agent: 'RedeMonitor',
+        agentNode: 'rede_mon',
+        component: 'api_gw',
+        agentIcon: '🌐',
+        componentLabel: 'API Gateway',
+        level: 3,
+        steps: [
+            { delay: 2000, message: 'RedeMonitor: "Latencia de 15000ms detectada no API Gateway."', particle: [] },
+            { delay: 2500, message: 'RedeMonitor → DashboardMonitor: "Todos servicos afetados?"', particle: ['rede_mon','dash_mon'] },
+            { delay: 2000, message: 'DashboardMonitor → RedeMonitor: "Sim, servico A e B com erro."', particle: ['dash_mon','rede_mon'] },
+            { delay: 3000, message: 'RedeMonitor → Supervisor: "Proposta N3: Ativar link de backup de rede."', particle: ['rede_mon','supervisor'] },
+            { delay: 1500, message: '👔 Supervisor: "⚠️ Proposta N3 - incidente_rede requer aprovacao humana."', particle: [] },
+        ]
+    },
+    {
+        name: 'token_spike',
+        agent: 'FinOpsMonitor',
+        agentNode: 'ia_mon',
+        component: 'ia',
+        agentIcon: '💰',
+        componentLabel: 'LLM Agent',
+        level: 2,
+        steps: [
+            { delay: 1500, message: '💰 FinOpsMonitor: "⚠️ Consumo de tokens 3x acima da media nos ultimos 5min."', particle: [] },
+            { delay: 2000, message: '💰 FinOpsMonitor: "Input: 45k tokens/min | Output: 28k tokens/min"', particle: [] },
+            { delay: 2500, message: '💰 FinOpsMonitor → IAMonitor: "Ha algo causando pico de requests?"', particle: ['ia_mon','ia_mon'] },
+            { delay: 2000, message: '🤖 IAMonitor → FinOpsMonitor: "Traffic normal. Pode ser modelo maior rodando."', particle: ['ia_mon','ia_mon'] },
+            { delay: 3000, message: '💰 FinOpsMonitor → Supervisor: "Custo anômalo detectado. Otimizando para modelo qwen2.5:7b (N2)."', particle: ['ia_mon','supervisor'] },
+            { delay: 2000, message: '💰 FinOpsMonitor: "✅ Switch para modelo eficiente. Economia de ~$0.002/min."', particle: [] },
+            { delay: 1500, message: '👔 Supervisor: "token_spike resolvido (N2). Custo normalizado."', particle: [] },
+        ]
+    },
+];
+
+const canvas = document.getElementById('infra-canvas');
+const ctx = canvas.getContext('2d');
+let particles = [];
+let animTime = 0;
+let scenarioIndex = 0;
+let stepIndex = 0;
+let chatCount = 0;
+let stats = { resolved: 0, inProgress: 0, pending: 0, auto: 0, human: 0 };
+let completedScenarios = [];
+let resultsHistory = [];
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function fmtNum(n) { return (n || 0).toLocaleString(); }
+function roundRect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r); ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h); ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r); ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.closePath(); }
+
+function addChat(msg) {
+    const el = document.getElementById('chat-messages');
+    const div = document.createElement('div');
+    div.className = 'chat-msg';
+    const m = msg.match(/^(\S+)\s*(.*)/);
+    let who = m ? m[1] : '';
+    let text = m ? m[2] : msg;
+    const icons = { 'JobsMonitor:': '⚙️', 'DashboardMonitor:': '📊', 'RedeMonitor:': '🌐', 'IAMonitor:': '🤖', '👔': '' };
+    const clsMap = { 'Supervisor': 'super', 'DashboardMonitor:': 'dash', 'JobsMonitor:': 'jobs', 'RedeMonitor:': 'rede', 'IAMonitor:': 'ia', '👔': 'super' };
+    const icon = icons[who] || '';
+    const cls = clsMap[who] || '';
+    const time = new Date().toLocaleTimeString();
+    div.innerHTML = `<span class="time">${time}</span> ${icon} <span class="from ${cls}">${who.replace(':','')}</span> <span class="content">${esc(text)}</span>`;
+    el.appendChild(div);
+    el.scrollTop = el.scrollHeight;
+    document.getElementById('chat-count').textContent = ++chatCount + ' msg';
+}
+
+function addParticle(fromId, toId) {
+    const all = [...AGENTS, ...COMPONENTS];
+    const f = all.find(a => a.id === fromId);
+    const t = all.find(a => a.id === toId);
+    if (!f || !t) return;
+    particles.push({ from: f, to: t, progress: 0, speed: 0.025 + Math.random() * 0.015 });
+}
+
+function runScenario(scenario) {
+    const comp = COMPONENTS.find(c => c.id === scenario.component);
+    if (comp) comp.status = 'critical';
+    stats.inProgress++;
+    updateStatsUI();
+    
+    // Add incident card
+    addIncidentCard(scenario.name, 'in-progress', scenario.componentLabel);
+    addChat(`⚠️ ${scenario.agent}: Incidente detectado em ${scenario.componentLabel}`);
+    addChat(`📋 Nivel ${scenario.level} - ${scenario.level <= 2 ? 'Auto-resolve' : 'Aguardando aprovacao'}`);
+    
+    stepIndex = 0;
+    function runNextStep() {
+        if (stepIndex >= scenario.steps.length) {
+            // Scenario complete
+            if (comp) setTimeout(() => comp.status = 'healthy', 1000);
+            if (scenario.level <= 2) {
+                stats.resolved++;
+                stats.auto++;
+                addIncidentCard(scenario.name, 'resolved', scenario.componentLabel);
+                resultsHistory.push({ name: scenario.name, level: scenario.level, resolution: 'auto', time: new Date().toLocaleTimeString(), agent: scenario.agent, component: scenario.componentLabel });
+            } else {
+                stats.pending++;
+                stats.human++;
+                resultsHistory.push({ name: scenario.name, level: scenario.level, resolution: 'pending', time: new Date().toLocaleTimeString(), agent: scenario.agent, component: scenario.componentLabel });
+            }
+            stats.inProgress = Math.max(0, stats.inProgress - 1);
+            updateStatsUI();
+            
+            completedScenarios.push(scenario.name);
+            // Schedule next scenario
+            const nextDelay = 4000 + Math.random() * 4000;
+            setTimeout(() => {
+                scenarioIndex = (scenarioIndex + 1) % SCENARIOS.length;
+                runScenario(SCENARIOS[scenarioIndex]);
+            }, nextDelay);
+            return;
+        }
+        
+        const step = scenario.steps[stepIndex];
+        setTimeout(() => {
+            addChat(step.message);
+            if (step.particle && step.particle.length === 2) {
+                addParticle(step.particle[0], step.particle[1]);
+            }
+            stepIndex++;
+            runNextStep();
+        }, step.delay);
+    }
+    
+    runNextStep();
+}
+
+function addIncidentCard(name, statusClass, component) {
+    const el = document.getElementById('tab-incidentes');
+    const labels = { 'resolved': 'Resolvido', 'in-progress': 'Em andamento', 'pending': 'Pendente' };
+    const card = document.createElement('div');
+    card.className = 'incident-card';
+    card.innerHTML = `<div class="title">⚠️ ${name}</div>
+        <div class="meta">${component}</div>
+        <div style="margin-top:4px"><span class="status ${statusClass}">${labels[statusClass] || statusClass}</span></div>`;
+    el.prepend(card);
+    while (el.children.length > 20) el.removeChild(el.lastChild);
+}
+
+function updateStatsUI() {
+    document.getElementById('s-resolved').textContent = stats.resolved;
+    document.getElementById('s-inprogress').textContent = stats.inProgress;
+    document.getElementById('s-pending').textContent = stats.pending;
+}
+
+function updateResultados() {
+    const el = document.getElementById('tab-resultados');
+    
+    // Cards de resumo
+    const total = resultsHistory.length;
+    const autoCount = resultsHistory.filter(r => r.resolution === 'auto').length;
+    const humanCount = resultsHistory.filter(r => r.resolution === 'pending').length;
+    const pctAuto = total > 0 ? Math.round(autoCount / total * 100) : 0;
+    
+    let html = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+        <div class="incident-card" style="text-align:center;padding:14px">
+            <div style="font-size:22px;font-weight:700;color:var(--green)">${pctAuto}%</div>
+            <div style="font-size:10px;color:var(--text2);margin-top:2px">Resolucao Autonoma</div>
+        </div>
+        <div class="incident-card" style="text-align:center;padding:14px">
+            <div style="font-size:22px;font-weight:700;color:var(--yellow)">${humanCount}</div>
+            <div style="font-size:10px;color:var(--text2);margin-top:2px">Pendente Decisao Humana</div>
+        </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+        <div class="incident-card" style="text-align:center;padding:14px">
+            <div style="font-size:20px;font-weight:700;color:var(--cyan)">${total}</div>
+            <div style="font-size:10px;color:var(--text2);margin-top:2px">Total Incidentes</div>
+        </div>
+        <div class="incident-card" style="text-align:center;padding:14px">
+            <div style="font-size:14px;font-weight:600;color:var(--accent)">${stats.pending > 0 ? '⚠️ Atencao' : '✅ Tudo OK'}</div>
+            <div style="font-size:10px;color:var(--text2);margin-top:2px">Status Geral</div>
+        </div>
+    </div>`;
+    
+    if (total > 0) {
+        html += `<div style="font-size:11px;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px;margin-top:4px">📋 Historico de Resolucoes</div>`;
+        
+        // Mostrar do mais recente ao mais antigo
+        const reversed = [...resultsHistory].reverse();
+        reversed.forEach(r => {
+            const isAuto = r.resolution === 'auto';
+            const bgColor = isAuto ? 'rgba(34,197,94,0.08)' : 'rgba(234,179,8,0.08)';
+            const borderColor = isAuto ? 'rgba(34,197,94,0.2)' : 'rgba(234,179,8,0.2)';
+            const icon = isAuto ? '✅' : '⏳';
+            const label = isAuto ? 'Autonomo (N' + r.level + ')' : 'Aguardando Humano (N' + r.level + ')';
+            
+            html += `<div class="incident-card" style="border-left:3px solid ${isAuto ? 'var(--green)' : 'var(--yellow)'};background:${bgColor};border-color:${borderColor}">
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                    <span style="font-size:11px">${icon} <strong>${r.name}</strong></span>
+                    <span style="font-size:10px;color:var(--text2)">${r.time}</span>
+                </div>
+                <div style="font-size:10px;color:var(--text2);margin-top:3px">
+                    ${r.agent} · ${r.component} · ${label}
+                </div>
+            </div>`;
+        });
+    } else {
+        html += `<div style="color:var(--text2);font-size:12px;text-align:center;padding:20px">Aguardando incidentes...</div>`;
+    }
+    
+    el.innerHTML = html;
+}
+
+// Atualizar resultados a cada 3s
+
+// ════════════ GRAPH RENDERER ════════════
+
+function resize() {
+    canvas.width = canvas.clientWidth;
+    canvas.height = canvas.clientHeight;
+    layoutNodes();
+}
+window.addEventListener('resize', resize);
+
+function layoutNodes() {
+    const w = canvas.width, h = canvas.height;
+    const cx = w / 2, cy = h / 2 + 20;
+    const r = Math.min(w, h) * 0.28;
+    
+    const compPos = [
+        { x: cx, y: cy - r }, { x: cx - r*0.65, y: cy - r*0.35 },
+        { x: cx + r*0.65, y: cy - r*0.35 }, { x: cx - r*0.6, y: cy + r*0.35 },
+        { x: cx, y: cy + r*0.55 }, { x: cx + r*0.6, y: cy + r*0.35 },
+        { x: cx, y: cy + r*0.85 },
+    ];
+    COMPONENTS.forEach((c, i) => { if (i < compPos.length) { c.x = compPos[i].x; c.y = compPos[i].y; } });
+    
+    const ar = r * 1.45;
+    const agentPos = [
+        { x: cx, y: cy - ar }, { x: cx - ar*0.7, y: cy + ar*0.3 },
+        { x: cx - ar*0.25, y: cy + ar*0.7 }, { x: cx + ar*0.25, y: cy + ar*0.7 },
+        { x: cx + ar*0.7, y: cy + ar*0.3 },
+    ];
+    AGENTS.forEach((a, i) => { if (i < agentPos.length) { a.x = agentPos[i].x; a.y = agentPos[i].y; } });
+}
+
+function drawGraph() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const now = Date.now();
+    
+    // Agent connections
+    AGENTS.forEach(a => {
+        if (a.id === 'supervisor') return;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(AGENTS[0].x, AGENTS[0].y);
+        ctx.strokeStyle = 'rgba(99,102,241,0.06)'; ctx.lineWidth = 1; ctx.setLineDash([3, 6]); ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    
+    AGENTS.forEach(a => COMPONENTS.forEach(c => {
+        const dist = Math.hypot(a.x - c.x, a.y - c.y);
+        if (dist < 350) {
+            ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(c.x, c.y);
+            ctx.strokeStyle = `rgba(99,102,241,${0.04 * (1 - dist/350)})`;
+            ctx.lineWidth = 0.5; ctx.stroke();
+        }
+    }));
+    
+    EDGES.forEach(e => {
+        const f = COMPONENTS.find(c => c.id === e.from);
+        const t = COMPONENTS.find(c => c.id === e.to);
+        if (!f || !t) return;
+        ctx.beginPath(); ctx.moveTo(f.x, f.y); ctx.lineTo(t.x, t.y);
+        ctx.strokeStyle = 'rgba(99,102,241,0.1)'; ctx.lineWidth = 1; ctx.stroke();
+    });
+    
+    // Agents
+    AGENTS.forEach(a => {
+        const pulse = 0.85 + Math.sin(animTime * 2 + a.id.length) * 0.15;
+        const rad = a.type === 'supervisor' ? 22 : 17;
+        const glowSize = rad * 2.5;
+        
+        const grad = ctx.createRadialGradient(a.x, a.y, 0, a.x, a.y, glowSize);
+        grad.addColorStop(0, a.color + '25'); grad.addColorStop(1, 'transparent');
+        ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(a.x, a.y, glowSize, 0, Math.PI * 2); ctx.fill();
+        
+        if (a.type === 'supervisor') {
+            ctx.beginPath(); ctx.arc(a.x, a.y, rad + 4, 0, Math.PI * 2);
+            ctx.strokeStyle = a.color + '40'; ctx.lineWidth = 1.5; ctx.stroke();
+        }
+        
+        ctx.beginPath(); ctx.arc(a.x, a.y, rad, 0, Math.PI * 2);
+        ctx.fillStyle = a.color + '20'; ctx.strokeStyle = a.color; ctx.lineWidth = 2; ctx.fill(); ctx.stroke();
+        ctx.fillStyle = a.color; ctx.font = a.type === 'supervisor' ? '11px Inter' : '10px Inter';
+        ctx.textAlign = 'center'; ctx.fillText(a.label, a.x, a.y + rad + 16);
+    });
+    
+    // Components
+    COMPONENTS.forEach(c => {
+        let color = c.status === 'healthy' ? 'rgba(34,197,94,0.7)' : 
+                    c.status === 'warning' ? 'rgba(234,179,8,0.7)' : 'rgba(239,68,68,0.7)';
+        const rad = 14;
+        const pulse = c.status !== 'healthy' ? 1 + Math.sin(animTime * 5) * 0.2 : 0.9 + Math.sin(animTime * 2) * 0.1;
+        
+        if (c.status !== 'healthy') {
+            const grad = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, rad * 3);
+            grad.addColorStop(0, color.replace('0.7', '0.12')); grad.addColorStop(1, 'transparent');
+            ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(c.x, c.y, rad * 3, 0, Math.PI * 2); ctx.fill();
+        }
+        
+        ctx.beginPath(); ctx.arc(c.x, c.y, rad, 0, Math.PI * 2);
+        ctx.fillStyle = color.replace('0.7', '0.15'); ctx.strokeStyle = color;
+        ctx.lineWidth = 2 * pulse; ctx.fill(); ctx.stroke();
+        ctx.fillStyle = c.status === 'critical' ? '#ef4444' : '#ccc';
+        ctx.font = '9px Inter'; ctx.textAlign = 'center';
+        ctx.fillText(c.label, c.x, c.y + rad + 12);
+    });
+    
+    // ═══ HUD: Tokens, Latencia e Custo no canto superior esquerdo ═══
+    const hudX = 16, hudY = 16;
+    const hudW = 200, hudH = 82;
+    
+    // Background
+    ctx.fillStyle = 'rgba(8,8,14,0.75)';
+    ctx.strokeStyle = 'rgba(99,102,241,0.2)';
+    ctx.lineWidth = 1;
+    roundRect(ctx, hudX, hudY, hudW, hudH, 8);
+    ctx.fill();
+    ctx.stroke();
+    
+    // Tokens
+    ctx.fillStyle = '#06b6d4'; ctx.font = 'bold 11px JetBrains Mono';
+    ctx.textAlign = 'left';
+    ctx.fillText('📊 Tokens', hudX + 10, hudY + 18);
+    ctx.fillStyle = '#e0e0e0'; ctx.font = '11px JetBrains Mono';
+    ctx.fillText(fmtNum(finOpsData.tokIn + finOpsData.tokOut), hudX + 100, hudY + 18);
+    
+    // Latencia
+    ctx.fillStyle = '#f97316'; ctx.font = 'bold 11px JetBrains Mono';
+    ctx.fillText('⚡ Latencia', hudX + 10, hudY + 36);
+    ctx.fillStyle = '#e0e0e0'; ctx.font = '11px JetBrains Mono';
+    ctx.fillText(document.getElementById('fm-lat-llm').textContent, hudX + 100, hudY + 36);
+    
+    // Custo
+    const provider = document.getElementById('fm-provider').value;
+    const p = PROVIDER_RATES[provider] || PROVIDER_RATES.ollama;
+    const costColor = provider === 'ollama' || provider === 'ollama_gpu' ? '#22c55e' : finOpsData.totalCost > 1 ? '#ef4444' : '#eab308';
+    ctx.fillStyle = costColor; ctx.font = 'bold 11px JetBrains Mono';
+    ctx.fillText('💰 Custo', hudX + 10, hudY + 54);
+    ctx.fillStyle = costColor; ctx.font = '11px JetBrains Mono';
+    ctx.fillText('$' + finOpsData.totalCost.toFixed(4), hudX + 100, hudY + 54);
+    
+    // Provedor
+    ctx.fillStyle = '#888'; ctx.font = '9px Inter';
+    ctx.fillText(p.name, hudX + 10, hudY + 72);
+    ctx.fillStyle = p.latColor;
+    ctx.fillText(p.lat, hudX + 100, hudY + 72);
+    
+    // ═══ Barra de custo no canto inferior direito ═══
+    const barX = canvas.width - 180, barY = canvas.height - 30;
+    const barW = 164, barH = 8;
+    const pct = Math.min(1, finOpsData.totalCost / (provider === 'ollama' ? 0.01 : provider === 'deepseek' ? 1 : 5));
+    
+    ctx.fillStyle = 'rgba(8,8,14,0.6)';
+    roundRect(ctx, barX - 4, barY - 4, barW + 8, barH + 8, 6);
+    ctx.fill();
+    
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    roundRect(ctx, barX, barY, barW, barH, 4);
+    ctx.fill();
+    
+    const grad = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+    grad.addColorStop(0, '#22c55e');
+    grad.addColorStop(0.5, '#eab308');
+    grad.addColorStop(1, '#ef4444');
+    ctx.fillStyle = grad;
+    roundRect(ctx, barX, barY, barW * pct, barH, 4);
+    ctx.fill();
+    
+    ctx.fillStyle = '#888'; ctx.font = '9px Inter'; ctx.textAlign = 'right';
+    ctx.fillText('Custo', barX + barW, barY - 4);
+    
+    // Particles
+    particles = particles.filter(p => p.progress < 1);
+    particles.forEach(p => {
+        p.progress += p.speed;
+        const x = p.from.x + (p.to.x - p.from.x) * p.progress;
+        const y = p.from.y + (p.to.y - p.from.y) * p.progress;
+        
+        for (let i = 0; i < 3; i++) {
+            const tp = p.progress - i * 0.03;
+            if (tp > 0) {
+                const tx = p.from.x + (p.to.x - p.from.x) * tp;
+                const ty = p.from.y + (p.to.y - p.from.y) * tp;
+                ctx.beginPath(); ctx.arc(tx, ty, 3 - i, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(99,102,241,${0.3 - i * 0.1})`; ctx.fill();
+            }
+        }
+        ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = '#6366f1'; ctx.shadowColor = '#6366f1'; ctx.shadowBlur = 10; ctx.fill();
+        ctx.shadowBlur = 0;
+    });
+    
+    animTime += 0.03;
+    requestAnimationFrame(drawGraph);
+}
+
+function switchTab(tab, btn) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + tab).classList.add('active');
+}
+
+function updateAgents() {
+    const el = document.getElementById('tab-agentes');
+    const icons = { 'DashboardMonitor':'📊', 'JobsMonitor':'⚙️', 'RedeMonitor':'🌐', 'IAMonitor':'🤖', 'FinOpsMonitor':'💰' };
+    const colors = { 'DashboardMonitor':'#06b6d4', 'JobsMonitor':'#eab308', 'RedeMonitor':'#f97316', 'IAMonitor':'#ec4899', 'FinOpsMonitor':'#22c55e' };
+    el.innerHTML = ['DashboardMonitor','JobsMonitor','RedeMonitor','IAMonitor','FinOpsMonitor'].map(name => {
+        const icon = icons[name] || '🤖'; const color = colors[name] || '#6366f1';
+        return `<div class="agent-node"><span class="agent-icon">${icon}</span><div class="agent-dot" style="color:${color}"></div><span class="agent-name">${name}</span><span class="agent-status active">🟢 ativo</span></div>`;
+    }).join('');
+}
+
+// Simulacao FinOps - atualiza metricas de custo/token em tempo real
+const PROVIDER_RATES = {
+    ollama: { name: 'Ollama (local CPU)', rate: 0, label: '$0.00', color: 'var(--green)', lat: 'Alta (2-5 tok/s)', latColor: 'var(--red)', bestFor: 'Privacidade e custo zero' },
+    ollama_gpu: { name: 'Ollama (local GPU)', rate: 0, label: '$0.00', color: 'var(--green)', lat: 'Media (15-40 tok/s)', latColor: 'var(--yellow)', bestFor: 'Privacidade com performance' },
+    openai: { name: 'OpenAI GPT-4o', rate: 15, label: '$15.00', color: 'var(--yellow)', lat: 'Baixa (80-150 tok/s)', latColor: 'var(--green)', bestFor: 'Alta throughput e qualidade' },
+    anthropic: { name: 'Anthropic Claude 4', rate: 8, label: '$8.00', color: 'var(--yellow)', lat: 'Baixa (70-120 tok/s)', latColor: 'var(--green)', bestFor: 'Raciocinio complexo' },
+    deepseek: { name: 'DeepSeek V3', rate: 0.5, label: '$0.50', color: 'var(--green)', lat: 'Baixa (90-140 tok/s)', latColor: 'var(--green)', bestFor: 'Custo-beneficio' },
+};
+
+let finOpsData = { totalCost: 0, tokIn: 0, tokOut: 0, calls: 0 };
+
+function updateFinOps() {
+    const provider = document.getElementById('fm-provider').value;
+    const p = PROVIDER_RATES[provider];
+    const rate = p.rate;
+    
+    finOpsData.tokIn += Math.floor(Math.random() * 200 + 50);
+    finOpsData.tokOut += Math.floor(Math.random() * 150 + 30);
+    finOpsData.calls++;
+    
+    const totalTokens = finOpsData.tokIn + finOpsData.tokOut;
+    finOpsData.totalCost = totalTokens * rate / 1000000;
+    
+    // Nome e custo
+    document.getElementById('fm-model').textContent = p.name;
+    document.getElementById('fm-rate').textContent = p.label;
+    document.getElementById('fm-rate').style.color = p.color;
+    
+    // Throughput
+    document.getElementById('fm-thoughput').textContent = p.lat;
+    document.getElementById('fm-thoughput').style.color = p.latColor;
+    
+    // Tokens
+    document.getElementById('fm-tok-in').textContent = finOpsData.tokIn.toLocaleString();
+    document.getElementById('fm-tok-out').textContent = finOpsData.tokOut.toLocaleString();
+    document.getElementById('fm-tok-total').textContent = totalTokens.toLocaleString();
+    document.getElementById('fm-tok-bar').style.width = Math.min(100, totalTokens / 200) + '%';
+    
+    // Custo total
+    document.getElementById('fm-total').textContent = '$' + finOpsData.totalCost.toFixed(4);
+    const totalColor = rate === 0 ? 'var(--green)' : (finOpsData.totalCost > 1 ? 'var(--red)' : 'var(--yellow)');
+    document.getElementById('fm-total').style.color = totalColor;
+    document.getElementById('s-cost').textContent = '💰 $' + finOpsData.totalCost.toFixed(3);
+    
+    // Economia vs OpenAI
+    const openaiCost = totalTokens * 15 / 1000000;
+    const economia = openaiCost > 0 ? ((1 - finOpsData.totalCost / openaiCost) * 100).toFixed(1) : '100';
+    document.getElementById('fm-save').textContent = economia + '%';
+    document.getElementById('fm-save').style.color = parseFloat(economia) > 50 ? 'var(--green)' : 'var(--yellow)';
+    
+    // Projecao mensal
+    const monthlyMultiplier = 1300000 / 2;
+    const monthly = finOpsData.totalCost * monthlyMultiplier / totalTokens * (totalTokens / (finOpsData.calls || 1));
+    document.getElementById('fm-monthly').textContent = '$' + (isNaN(monthly) ? '0.00' : monthly.toFixed(2));
+    document.getElementById('fm-monthly').style.color = monthly > 100 ? 'var(--red)' : monthly > 20 ? 'var(--yellow)' : 'var(--green)';
+    
+    // Recomendacao
+    document.getElementById('fm-rec-text').textContent = p.bestFor;
+    const bg = p.latColor === 'var(--green)' ? 'rgba(34,197,94,0.1)' : p.latColor === 'var(--yellow)' ? 'rgba(234,179,8,0.1)' : 'rgba(239,68,68,0.1)';
+    const bd = p.latColor === 'var(--green)' ? 'rgba(34,197,94,0.2)' : p.latColor === 'var(--yellow)' ? 'rgba(234,179,8,0.2)' : 'rgba(239,68,68,0.2)';
+    document.getElementById('fm-recommend').style.background = bg;
+    document.getElementById('fm-recommend').style.borderColor = bd;
+    
+    // Latencia no HUD (simulada baseada no throughput)
+    const latMap = { 'Baixa': 1, 'Media': 2, 'Alta': 4 };
+    const latFactor = p.lat.includes('Baixa') ? 1 : p.lat.includes('Media') ? 2.5 : 6;
+    const latMs = Math.floor(Math.random() * 150 * latFactor + 50 * latFactor);
+    document.getElementById('fm-lat-llm').textContent = latMs + 'ms';
+    document.getElementById('fm-lat-api').textContent = Math.floor(Math.random() * 80 + 20) + 'ms';
+    document.getElementById('fm-lat-agents').textContent = Math.floor(Math.random() * 150 + 50) + 'ms';
+}
+
+// Recalcular quando trocar o provedor
+document.addEventListener('change', function(e) {
+    if (e.target && e.target.id === 'fm-provider') {
+        finOpsData.totalCost = 0;
+        updateFinOps();
+    }
+});
+
+setInterval(updateFinOps, 2000);
+setInterval(updateResultados, 3000);
+
+// Init
+resize();
+drawGraph();
+updateAgents();
+updateStatsUI();
+
+// Start the scenario loop after a small delay
+setTimeout(() => {
+    addChat('🚀 Sentinel Agent iniciado. 4 agentes especialistas + Supervisor 👔');
+    addChat('📡 Simulador de metricas ativo. Monitorando infraestrutura...');
+    setTimeout(() => {
+        runScenario(SCENARIOS[0]);
+    }, 2000);
+}, 1500);
+</script>
+</body>
+</html>
