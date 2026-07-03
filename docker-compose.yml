@@ -1,0 +1,15 @@
+services:
+  sentinel:
+    build: .
+    container_name: sentinel-agent
+    ports:
+      - "${PORT:-8701}:8701"
+    environment:
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b}
+      - SENTINEL_DB=/app/data/sentinel.db
+      - SIMULATOR_INTERVAL=8
+      - AGENT_INTERVAL=10
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
