@@ -15,7 +15,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import Response
 from pydantic import BaseModel
+from prometheus_client import Counter, Gauge, generate_latest
 
 DB_PATH = os.environ.get("SENTINEL_DB", str(Path(__file__).parent.parent / "data" / "sentinel.db"))
 
@@ -46,6 +48,11 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 orchestrator = None
+
+# Prometheus metrics
+SENTINEL_INCIDENTS = Counter("sentinel_incidents_total", "Total incidents detected", ["type"])
+SENTINEL_AGENTS_ACTIVE = Gauge("sentinel_agents_active", "Number of active agents")
+SENTINEL_ORCHESTRATOR_STATUS = Gauge("sentinel_orchestrator_status", "Orchestrator health 1=ok")
 
 
 @asynccontextmanager
@@ -103,6 +110,15 @@ def get_db():
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "sentinel-agent"}
+
+
+@app.get("/metrics")
+def metrics():
+    if orchestrator:
+        SENTINEL_ORCHESTRATOR_STATUS.set(1)
+    else:
+        SENTINEL_ORCHESTRATOR_STATUS.set(0)
+    return Response(content=generate_latest(), media_type="text/plain; charset=utf-8")
 
 
 @app.get("/api/estado")

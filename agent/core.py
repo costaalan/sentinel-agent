@@ -43,7 +43,7 @@ def call_llm(prompt: str, system: str = "", max_tokens: int = 300) -> str:
 
     try:
         req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             result = json.loads(resp.read())
             return result.get("response", "").strip()
     except Exception as e:
@@ -99,6 +99,7 @@ class SpecialistAgent(ABC):
     name: str = ""
     description: str = ""
     components_monitored: list[str] = []
+    MIN_CONFIDENCE_THRESHOLD: float = 0.6
     
     def __init__(self, supervisor):
         self.supervisor = supervisor
@@ -129,6 +130,20 @@ class SpecialistAgent(ABC):
             print(f"[{self.name}] Runbook aplicavel: {resultado['runbook'][:80]}...")
         
         return nivel
+    
+    def _validate_confidence(self, diagnostico: dict) -> bool:
+        """Verifica se a confianca do diagnostico atinge o threshold minimo.
+        
+        Retorna True se confianca >= MIN_CONFIDENCE_THRESHOLD, False caso contrario.
+        Agentes podem sobrescrever MIN_CONFIDENCE_THRESHOLD para ajustar por dominio.
+        """
+        confianca = diagnostico.get("confianca", 0.0)
+        if confianca < self.MIN_CONFIDENCE_THRESHOLD:
+            print(f"[{self.name}] CONFIANCA BAIXA: {confianca:.2f} < {self.MIN_CONFIDENCE_THRESHOLD} "
+                  f"- escalando para revisao humana (N3)")
+            return False
+        print(f"[{self.name}] Confianca OK: {confianca:.2f} >= {self.MIN_CONFIDENCE_THRESHOLD}")
+        return True
     
     def executar_acao(self, anomalia: dict, diagnostico: dict) -> dict:
         """Executa a acao e retorna resultado."""
@@ -177,13 +192,29 @@ class SpecialistAgent(ABC):
             
             print(f"[{self.name}] Anomalia detectada: {anomalia.get('descricao', anomalia)}")
             
-            # Nivel de autonomia
-            nivel = self.classificar_nivel(anomalia)
-            
             # Diagnosticar
             diagnostico = self.diagnosticar(anomalia, conn)
-            
             incidente_id = anomalia.get("incidente_id", int(datetime.datetime.now().timestamp()))
+            
+            # --- GUARDRAIL: verificar confianca do diagnostico ---
+            if not self._validate_confidence(diagnostico):
+                # Confianca baixa: forcar N3 (propor ao supervisor, NAO agir)
+                self.notificar_supervisor("proposta_de_acao",
+                    json.dumps({
+                        "diagnostico": diagnostico,
+                        "acao_proposta": self.executar_acao(anomalia, diagnostico),
+                        "nivel": 3,
+                        "justificativa": f"Confianca do diagnostico ({diagnostico.get('confianca', 0.0):.2f}) "
+                                         f"abaixo do threshold ({self.MIN_CONFIDENCE_THRESHOLD}). "
+                                         f"Requer revisao humana antes de qualquer acao."
+                    }),
+                    incidente_id, 3)
+                conn.commit()
+                return {"anomalia": anomalia, "nivel": 3, "incidente_id": incidente_id,
+                        "confianca_baixa": True}
+            
+            # Nivel de autonomia (RAG)
+            nivel = self.classificar_nivel(anomalia)
             
             if nivel <= 2:
                 # Executar acao (N1/N2 - autonomo)
